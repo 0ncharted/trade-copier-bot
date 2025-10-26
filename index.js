@@ -7,7 +7,7 @@ const LEADER_USERNAME = 'BasedPing_bot';  // Replace with your @handle (no @)
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 app.use(express.json());
-app.use(express.json());
+
 
 // NEW: CORS fix for local dev (allows localhost to fetch API without browser block)
 const cors = require('cors');
@@ -27,6 +27,7 @@ bot.command('subscribe', (ctx) => {
   }
   const userId = ctx.from.id;
   subscribers[userId] = { userId, risk: 0.5, ref };
+  console.log('New sub added:', userId, 'risk:', 0.5, 'ref:', ref);
   ctx.reply(`Subscribed with ref ${ref}! Set risk with /risk 0.5.`);
 });
 
@@ -53,8 +54,10 @@ bot.command('risk', (ctx) => {
 // Parse group messages for signals (only from leader)
 bot.on('text', async (ctx) => {
   if (ctx.message.text.includes('New Trade Alert!') && ctx.from.username === LEADER_USERNAME) {
+    console.log('Webhook hit—leader:', ctx.from.username, 'text preview:', ctx.message.text.substring(0, 100));
     const spoilerMatch = ctx.message.text.match(/<tg-spoiler>SIGNAL: ({.*})<\/tg-spoiler>/);
     if (spoilerMatch) {
+      console.log('Spoiler parsed:', spoilerMatch[1].substring(0, 50) + '...');
       try {
         const signal = JSON.parse(spoilerMatch[1]);
         if (verifySignal(signal)) {
@@ -71,6 +74,8 @@ bot.on('text', async (ctx) => {
         console.error('Signal parse error:', e.message);
         return;  // Invalid JSON, skip
       }
+    } else {
+      console.log('No spoiler match in text');
     }
   }
 });
