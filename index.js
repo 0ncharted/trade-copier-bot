@@ -1,7 +1,8 @@
 import { sql } from '@vercel/postgres';
-const { Telegraf } = require('telegraf');
-const express = require('express');
-const crypto = require('crypto');
+import { Telegraf } from 'telegraf';
+import express from 'express';
+import crypto from 'crypto';
+import cors from 'cors';  // Import early for use
 
 const BOT_TOKEN = process.env.BOT_TOKEN;  // From Vercel env
 const LEADER_USERNAME = 'BasedPing_bot';  // Replace with your @handle (no @)
@@ -9,10 +10,13 @@ const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 app.use(express.json());
 
-
 // NEW: CORS fix for local dev (allows localhost to fetch API without browser block)
-const cors = require('cors');
 app.use(cors({ origin: '*' }));  // '*' = allow all origins (localhost + prod)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 mins
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+app.use('/api/', limiter);
 
 // Subscribe command with ref check
 bot.command('subscribe', async (ctx) => {  // Async for await
@@ -106,7 +110,9 @@ bot.on('text', async (ctx) => {
 });
 
 function verifySignal(signal) {
-  return signal.signature === 'GODSEYE-HASH-ABC123';  // Match leader's hash
+  const APP_SECRET = process.env.APP_SECRET || 'godseye-secret-key';  // Add to Vercel env
+  const expected = crypto.createHmac('sha256', APP_SECRET).update(JSON.stringify({symbol: signal.symbol, side: signal.side, size: signal.size, price: signal.price, leverage: signal.leverage})).digest('hex').substring(0, 16);
+  return signal.signature === expected;
 }
 
 // Vercel API endpoint for app polling (follower fetches pending signals)
@@ -133,8 +139,40 @@ app.delete('/api/signals/:id', async (req, res) => {
   }
 });
 
+// GET /api/risk?userId=123 - Fetch risk multiplier for user
+app.get('/api/risk', rateLimit, async (req, res) => {
+  const userId = req.query.userId;
+  try {
+    const { rows } = await sql`SELECT risk FROM subs WHERE user_id = ${userId}`;
+    if (rows.length > 0) {
+      res.json({ risk: rows[0].risk });
+    } else {
+      res.status(404).json({ error: 'User not subscribed' });
+    }
+  } catch (e) {
+    console.error('DB risk fetch error:', e);
+    res.status(500).json({ error: 'Failed to fetch risk' });
+  }
+});
+
+// GET /api/subscription?userId=123 - Check if user is subscribed
+app.get('/api/subscription', rateLimit, async (req, res) => {
+  const userId = req.query.userId;
+  try {
+    const { rows } = await sql`SELECT risk FROM subs WHERE user_id = ${userId}`;
+    if (rows.length > 0) {
+      res.json({ subscribed: true, risk: rows[0].risk });
+    } else {
+      res.json({ subscribed: false });
+    }
+  } catch (e) {
+    console.error('DB subscription check error:', e);
+    res.status(500).json({ error: 'Failed to check subscription' });
+  }
+});
+
 // Webhook for Telegram (Vercel URL + /webhook)
 app.use(bot.webhookCallback('/webhook'));
 
-// Vercel default export (fixes 500)
-module.exports = app;
+// Vercel default export (ESM syntax)
+export default app;
